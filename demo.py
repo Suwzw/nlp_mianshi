@@ -247,6 +247,33 @@ def read_image(uploaded_file, sample_path: str | None) -> tuple[Image.Image | No
     return None, ""
 
 
+def build_input_signature(
+    model_label: str,
+    image_name: str,
+    sample_path: str | None,
+    uploaded_file,
+    conf_threshold: float,
+) -> tuple:
+    upload_id = None
+    if uploaded_file is not None:
+        upload_id = (uploaded_file.name, getattr(uploaded_file, "size", None))
+
+    return (
+        model_label,
+        image_name,
+        str(sample_path or ""),
+        upload_id,
+        round(float(conf_threshold), 3),
+    )
+
+
+def clear_stale_result(session_state, current_signature: tuple) -> None:
+    previous_signature = session_state.get("demo_input_signature")
+    if previous_signature != current_signature:
+        session_state.pop("demo_result", None)
+        session_state["demo_input_signature"] = current_signature
+
+
 def run_detection(model_info: dict[str, str], image: Image.Image, conf_threshold: float) -> tuple[list[dict], float, np.ndarray]:
     import cv2
 
@@ -450,6 +477,14 @@ def main() -> None:
 
     selected_info, uploaded_file, sample_path, sample_name, conf_threshold, run_button = render_sidebar(models, samples)
     image, image_name = read_image(uploaded_file, sample_path)
+    input_signature = build_input_signature(
+        model_label=selected_info["label"],
+        image_name=image_name,
+        sample_path=sample_path,
+        uploaded_file=uploaded_file,
+        conf_threshold=conf_threshold,
+    )
+    clear_stale_result(st.session_state, input_signature)
 
     st.markdown(
         """
@@ -486,6 +521,7 @@ def main() -> None:
             with st.spinner("模型推理中，首次运行会加载权重..."):
                 detections, elapsed_ms, annotated = run_detection(selected_info, image, conf_threshold)
             st.session_state["demo_result"] = {
+                "input_signature": input_signature,
                 "image_name": image_name,
                 "model_label": selected_info["label"],
                 "detections": detections,
