@@ -1,110 +1,92 @@
 # 基于大小模型协同的小样本低空宽带信号检测
 
-## 课题信息
+本项目面向低空频谱监测场景，研究在标注样本有限时，如何利用大模型教师与轻量化学生模型协同完成宽带通信信号检测。选题组合为 A2「基于时频图的宽带信号检测与识别」+ B7「大小模型协同」+ C2「小样本学习」。
 
-- **选题组合**: A2(宽带信号检测) + B7(大小模型协同) + C2(小样本学习)
-- **数据集**: 低空五类宽带信号检测与识别数据集 (WiFi, Bluetooth, ZigBee, Lightbridge, XPD)
-- **核心问题**: 当标注样本有限时，如何通过Teacher-Student知识迁移保持检测精度？
+## 研究背景
 
-## 环境要求
+低空经济、无人机、物联网设备和无线音频设备大量工作在 2.4GHz ISM 频段，多协议信号共存使频谱监测和干扰识别变得更加重要。实际部署中，射频信号采集和标注成本较高，新设备或新协议出现时往往只有少量标注样本；同时，边缘设备对模型大小和推理速度有严格要求。
 
-```
-Python 3.11+
-PyTorch 2.5.1+ (CUDA 12.4)
-ultralytics
-opencv-python
-matplotlib
-seaborn
-pandas
-streamlit
-```
+本项目将宽带信号时频图视为二维图像，用目标检测方法定位并识别 WiFi、Bluetooth、ZigBee、Lightbridge 和 XPD 五类信号。
 
-## 安装
+## 方法概述
 
-```bash
-conda activate pytorch
-pip install ultralytics streamlit
-```
+项目采用 Teacher-Student 伪标签蒸馏框架：
 
-## 项目结构
+1. 使用全量标注数据训练 YOLOv8m 作为 Teacher。
+2. 使用少量标注数据训练 YOLOv8n 作为小样本 Student 基线。
+3. Teacher 对小样本训练集生成高置信度伪标签。
+4. 将人工标注与伪标签合并，训练轻量化 YOLOv8n Student。
 
-```
-project/
-├── dataset/               # 数据集 (按录制场次划分)
-│   ├── images/
-│   │   ├── train/         # 6场录制, 1902张
-│   │   ├── val/           # 2场录制, 634张
-│   │   ├── test/          # 1场录制, 317张
-│   │   ├── train_fewshot/ # 小样本子集, 232张
-│   │   └── train_distill/ # 蒸馏数据 (few-shot + Teacher伪标签)
-│   ├── labels/
-│   ├── data.yaml
-│   ├── data_fewshot.yaml
-│   └── data_distill.yaml
-├── prepare_data.py        # 数据集处理
-├── train.py               # 训练脚本
-├── distill.py             # 伪标签知识蒸馏
-├── inference.py           # 推理脚本
-├── analyze.py             # 实验分析
-├── demo.py                # Streamlit Demo
-├── runs/                  # 训练输出
-├── figures/               # 实验图表
-├── ppt/                   # PPT
-└── speech/                # 讲稿
-```
+数据集按录制场次划分为训练集、验证集和测试集，避免同一采集场景同时出现在训练和测试中造成数据泄露。
 
-## 使用方法
+## 实验结果
 
-### 1. 数据处理
-```bash
-python prepare_data.py
-```
+### 整体性能对比
 
-### 2. 训练 (4组实验)
-```bash
-# ① YOLOv8n 全量训练 (Student上界)
-python train.py v8n_full
+| 模型 | 训练数据 | mAP@50 | mAP@50-95 | 参数量 | FPS |
+|---|---:|---:|---:|---:|---:|
+| YOLOv8n 全量 | 1902 张 | 96.4% | 81.5% | 3.0M | 122 |
+| YOLOv8m Teacher | 1902 张 | 96.4% | 81.9% | 25.9M | 40 |
+| YOLOv8n 小样本 | 232 张 | 95.2% | 78.3% | 3.0M | 153 |
+| YOLOv8n 蒸馏 | 232 张 + 伪标签 | 94.9% | 78.0% | 3.0M | 156 |
 
-# ② YOLOv8m 全量训练 (Teacher)
-python train.py v8m_full
+### 逐类 AP@50 对比
 
-# ③ YOLOv8n 小样本训练 (退化)
-python train.py v8n_fewshot
+| 模型 | WiFi | Bluetooth | ZigBee | Lightbridge | XPD |
+|---|---:|---:|---:|---:|---:|
+| YOLOv8n 全量 | 91.9 | 92.8 | 98.4 | 99.5 | 99.5 |
+| YOLOv8m Teacher | 91.3 | 93.5 | 98.4 | 99.5 | 99.5 |
+| YOLOv8n 小样本 | 89.4 | 90.2 | 97.7 | 99.5 | 99.4 |
+| YOLOv8n 蒸馏 | 86.4 | 90.9 | 98.2 | 99.5 | 99.5 |
 
-# ④ 伪标签蒸馏训练 (恢复)
-python distill.py all
+### 结果分析
+
+小样本训练使 mAP@50 从 96.4% 降至 95.2%，但 mAP@50-95 从 81.5% 降至 78.3%，说明样本减少对定位质量影响更明显。伪标签蒸馏在验证集上有提升，但测试集略低于小样本基线，表明伪标签质量和类别差异会影响知识迁移效果。逐类结果显示，Bluetooth 和 ZigBee 略有收益，而 WiFi 下降更明显，后续可从置信度加权、类别自适应筛选和响应级知识蒸馏方向改进。
+
+## 可视化结果
+
+- `figures/framework_diagram.png`：大小模型协同框架
+- `figures/map_comparison.png`：整体 mAP 对比
+- `figures/per_class_ap.png`：逐类 AP 对比
+- `figures/distillation_gain.png`：蒸馏前后逐类变化
+- `figures/model_comparison.png`：参数量、模型大小和推理速度对比
+
+## Demo
+
+本项目提供 Streamlit 演示系统，用于展示时频图输入、检测框输出、类别解释、模型性能和实验对比。
+
+运行方式：
+
+```powershell
+& 'C:\Users\28271\Anaconda3\envs\pytorch\python.exe' -m streamlit run demo.py
 ```
 
-### 3. 实验分析
-```bash
-python analyze.py
+说明：仓库未包含原始数据集和模型权重。若需完整运行 Demo，请在本地保留训练得到的 `runs/*/weights/best.pt` 权重文件和测试样例图像。
+
+## 文件结构
+
+```text
+.
+├── README.md
+├── demo.py                  # Streamlit 演示系统
+├── prepare_data.py           # 数据集划分脚本
+├── train.py                  # YOLOv8 训练脚本
+├── distill.py                # 伪标签生成与蒸馏流程
+├── distill_train_simple.py   # 蒸馏训练脚本
+├── analyze.py                # 实验分析与图表生成
+├── inference.py              # 单图推理脚本
+├── figures/                  # 实验图表
+├── ppt/ppt_content.md        # 三页汇报内容
+└── speech/speech_3min.md     # 三分钟汇报讲稿
 ```
 
-### 4. 推理
-```bash
-python inference.py runs/v8n_distilled/weights/best.pt test_image.jpg 0.25
-```
+## 环境依赖
 
-### 5. Demo
-```bash
-streamlit run demo.py
-```
-
-## 实验设计
-
-| 实验 | 模型 | 训练数据 | 目的 |
-|------|------|----------|------|
-| ① 上界 | YOLOv8n | 全量(1902张) | Student精度天花板 |
-| ② Teacher | YOLOv8m | 全量(1902张) | Teacher模型参照 |
-| ③ 退化 | YOLOv8n | 小样本(232张) | 展示小样本性能下降 |
-| ④ 恢复 | YOLOv8n | 小样本+伪标签 | 知识迁移恢复效果 |
-
-## 信号类别
-
-| ID | 类别 | 调制方式 | 带宽 | 应用 |
-|----|------|----------|------|------|
-| 0 | WiFi | OFDM | 20-160 MHz | 无线局域网 |
-| 1 | Bluetooth | GFSK | 1 MHz | 短距离通信 |
-| 2 | ZigBee | DSSS | 2 MHz | 物联网 |
-| 3 | Lightbridge | OFDM | 10 MHz | 无人机图传 |
-| 4 | XPD | FM | 6 MHz | 无线麦克风 |
+- Python 3.11
+- PyTorch + CUDA
+- ultralytics
+- opencv-python
+- streamlit
+- pandas
+- matplotlib
+- pillow

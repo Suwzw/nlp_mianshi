@@ -18,3 +18,9 @@ __pycache__/
 *.tmp
 .DS_Store
 Thumbs.db
+
+# Local AI-assistant and handoff materials, kept locally but not published
+LEARN_ME.md
+PACKAGE_README.md
+PROJECT_GUIDE.md
+docs/

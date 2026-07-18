@@ -65,19 +65,61 @@ def get_map_from_results(exp_name):
     model = YOLO(best_pt)
     results = model.val(data=DATA_YAML, split="test", verbose=False, imgsz=512)
 
-    # 逐类 AP
-    per_class_ap = {}
-    if hasattr(results, 'boxes'):
-        ap50 = results.box.ap50  # per-class AP50
-        ap = results.box.ap  # per-class AP50-95
-        for i, name in CLASS_NAMES.items():
-            if i < len(ap50):
-                per_class_ap[name] = {
-                    "ap50": float(ap50[i]),
-                    "ap50_95": float(ap[i]),
-                }
+    per_class_ap = extract_per_class_ap(results)
 
     return float(results.box.map50), float(results.box.map), per_class_ap
+
+
+def to_numpy_array(value):
+    """Convert torch/numpy/list metric containers to a flat numpy array."""
+    if value is None:
+        return None
+    if hasattr(value, "cpu"):
+        value = value.cpu()
+    if hasattr(value, "numpy"):
+        value = value.numpy()
+    return np.asarray(value).reshape(-1)
+
+
+def extract_per_class_ap(results):
+    """兼容不同 Ultralytics 版本，提取每个类别的 AP@50 和 AP@50-95。"""
+    per_class_ap = {}
+    box = getattr(results, "box", None)
+    if box is None:
+        return per_class_ap
+
+    ap50_values = to_numpy_array(getattr(box, "ap50", None))
+    ap_values = to_numpy_array(getattr(box, "ap", None))
+    ap_class_index = to_numpy_array(getattr(box, "ap_class_index", None))
+    maps_values = to_numpy_array(getattr(box, "maps", None))
+
+    if ap50_values is not None and ap_values is not None:
+        if ap_class_index is None or len(ap_class_index) != len(ap50_values):
+            ap_class_index = np.arange(len(ap50_values))
+
+        for pos, cls_id in enumerate(ap_class_index):
+            cls_id = int(cls_id)
+            cls_name = CLASS_NAMES.get(cls_id, str(cls_id))
+            per_class_ap[cls_name] = {
+                "ap50": float(ap50_values[pos]),
+                "ap50_95": float(ap_values[pos]) if pos < len(ap_values) else 0.0,
+            }
+
+    # Fallback: many Ultralytics versions expose per-class mAP@50-95 as box.maps.
+    # It does not contain AP@50, but it prevents silently reporting all zeros.
+    if maps_values is not None:
+        for cls_id, cls_name in CLASS_NAMES.items():
+            if cls_id < len(maps_values):
+                per_class_ap.setdefault(
+                    cls_name,
+                    {"ap50": 0.0, "ap50_95": float(maps_values[cls_id])},
+                )
+
+    missing = [name for name in CLASS_NAMES.values() if name not in per_class_ap]
+    if missing:
+        print(f"    ⚠️ 未提取到这些类别的逐类AP: {', '.join(missing)}")
+
+    return per_class_ap
 
 
 def plot_map_comparison(map_data):

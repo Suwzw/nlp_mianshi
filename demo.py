@@ -33,7 +33,7 @@ CLASS_COLORS = {
 MODEL_CATALOG = {
     "v8n_distilled": {
         "label": "YOLOv8n 蒸馏 Student",
-        "role": "232 张小样本 + Teacher 伪标签，面试默认演示模型",
+        "role": "232 张小样本 + Teacher 伪标签训练的轻量模型",
         "map50": "94.9%",
         "map": "78.0%",
         "params": "3.0M",
@@ -103,6 +103,21 @@ EXPERIMENT_ROWS = [
     {"模型": "YOLOv8m Teacher", "训练数据": "1902 张", "mAP@50": "96.4%", "mAP@50-95": "81.9%", "参数量": "25.9M", "FPS": "42"},
     {"模型": "YOLOv8n 小样本", "训练数据": "232 张", "mAP@50": "95.2%", "mAP@50-95": "78.3%", "参数量": "3.0M", "FPS": "153"},
     {"模型": "YOLOv8n 蒸馏", "训练数据": "232 张 + 伪标签", "mAP@50": "94.9%", "mAP@50-95": "78.0%", "参数量": "3.0M", "FPS": "156"},
+]
+
+PER_CLASS_AP_ROWS = [
+    {"模型": "YOLOv8n 全量", "WiFi": 91.9, "Bluetooth": 92.8, "ZigBee": 98.4, "Lightbridge": 99.5, "XPD": 99.5},
+    {"模型": "YOLOv8m Teacher", "WiFi": 91.3, "Bluetooth": 93.5, "ZigBee": 98.4, "Lightbridge": 99.5, "XPD": 99.5},
+    {"模型": "YOLOv8n 小样本", "WiFi": 89.4, "Bluetooth": 90.2, "ZigBee": 97.7, "Lightbridge": 99.5, "XPD": 99.4},
+    {"模型": "YOLOv8n 蒸馏", "WiFi": 86.4, "Bluetooth": 90.9, "ZigBee": 98.2, "Lightbridge": 99.5, "XPD": 99.5},
+]
+
+DISTILLATION_GAIN_ROWS = [
+    {"类别": "WiFi", "小样本 AP@50": "89.4", "蒸馏 AP@50": "86.4", "变化": "-3.4%"},
+    {"类别": "Bluetooth", "小样本 AP@50": "90.2", "蒸馏 AP@50": "90.9", "变化": "+0.8%"},
+    {"类别": "ZigBee", "小样本 AP@50": "97.7", "蒸馏 AP@50": "98.2", "变化": "+0.5%"},
+    {"类别": "Lightbridge", "小样本 AP@50": "99.5", "蒸馏 AP@50": "99.5", "变化": "+0.0%"},
+    {"类别": "XPD", "小样本 AP@50": "99.4", "蒸馏 AP@50": "99.5", "变化": "+0.0%"},
 ]
 
 
@@ -371,8 +386,8 @@ def render_signal_explanation(detections: list[dict], elapsed_ms: float) -> None
         st.markdown(
             """
             <div class="insight">
-            面试讲法：如果出现未知协议或低信噪比信号，闭集检测器可能无法给出可靠类别，
-            后续可以加入开集识别或异常检测模块。
+            若出现未知协议或低信噪比信号，闭集检测器可能无法给出可靠类别；
+            后续可结合开集识别或异常检测模块提升未知信号处理能力。
             </div>
             """,
             unsafe_allow_html=True,
@@ -406,7 +421,7 @@ def render_signal_explanation(detections: list[dict], elapsed_ms: float) -> None
     st.markdown(
         f"""
         <div class="insight">
-        <b>现场解释建议：</b>{conclusion}<br>
+        <b>频谱场景分析：</b>{conclusion}<br>
         <b>推理耗时：</b>{elapsed_ms:.1f} ms，本机实时演示时可能受首次加载和显卡状态影响。
         </div>
         """,
@@ -415,14 +430,18 @@ def render_signal_explanation(detections: list[dict], elapsed_ms: float) -> None
 
 
 def render_research_summary() -> None:
-    st.markdown('<div class="section-title">研究结论对比</div>', unsafe_allow_html=True)
+    st.markdown('<div class="section-title">整体性能对比</div>', unsafe_allow_html=True)
     st.dataframe(pd.DataFrame(EXPERIMENT_ROWS), hide_index=True, width="stretch")
+    st.markdown('<div class="section-title">逐类 AP@50 对比</div>', unsafe_allow_html=True)
+    st.dataframe(pd.DataFrame(PER_CLASS_AP_ROWS), hide_index=True, width="stretch")
+    st.markdown('<div class="section-title">蒸馏前后逐类变化</div>', unsafe_allow_html=True)
+    st.dataframe(pd.DataFrame(DISTILLATION_GAIN_ROWS), hide_index=True, width="stretch")
     st.markdown(
         """
         <div class="insight">
-        <b>答辩重点：</b>这个结果不要硬讲成“蒸馏测试集显著提升”。
-        更好的表述是：简单伪标签蒸馏在验证集上有提升，但测试集略降，
-        说明伪标签质量是大小模型协同能否有效迁移的关键瓶颈。
+        <b>结果观察：</b>在测试集上，蒸馏模型整体精度与小样本模型接近；
+        从类别维度看，Bluetooth 和 ZigBee 略有提升，WiFi 下降更明显，
+        表明伪标签质量和类别差异会影响知识迁移效果。
         </div>
         """,
         unsafe_allow_html=True,
@@ -437,7 +456,7 @@ def render_sidebar(models: dict[str, dict[str, str]], samples: dict[str, str]):
     selected_model = st.sidebar.selectbox("检测模型", model_labels, index=default_model)
 
     conf_threshold = st.sidebar.slider("置信度阈值", 0.10, 0.90, 0.25, 0.05)
-    st.sidebar.caption("现场建议保持 0.25；如果目标太少，可降到 0.20。")
+    st.sidebar.caption("只显示置信度不低于该值的检测框；调高更严格、误检更少，调低更敏感、检测框更多。")
 
     sample_name = None
     if samples:
@@ -537,7 +556,7 @@ def main() -> None:
     if result is None:
         st.markdown('<div class="section-title">待检测时频图</div>', unsafe_allow_html=True)
         st.image(image, caption=image_name or sample_name, width="stretch")
-        st.info("点击左侧“开始检测”后，这里会展示检测框、信号解释和面试讲法。")
+        st.info("点击左侧“开始检测”后，这里会展示检测框、信号解释和实验对比。")
         render_research_summary()
         return
 
